@@ -414,6 +414,10 @@ hint.pcm.0.vol="50"
 
 This will set the volume channel to a default value of `50` when the man:pcm[4] module is loaded.
 
+=== Advanced Setup
+
+Here it is
+
 [[sound-mp3]]
 == MP3 Audio
 
