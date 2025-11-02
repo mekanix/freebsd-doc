@@ -1,8 +1,8 @@
 ---
-title: Chapter 8. IPv6 Internals
+title: Chapter 9. IPv6 Internals
 authors:
   - author: Yoshinobu Inoue
-prev: books/developers-handbook/sockets
+prev: books/developers-handbook/kqueue
 next: books/developers-handbook/partiii
 description: IPv6 Internals
 tags: ["IPv6", "FreeBSD"]
@@ -20,7 +20,7 @@ params:
 :icons: font
 :sectnums:
 :sectnumlevels: 6
-:sectnumoffset: 8
+:sectnumoffset: 9
 :partnums:
 :source-highlighter: rouge
 :experimental:

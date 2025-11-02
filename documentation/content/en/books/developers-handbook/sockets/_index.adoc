@@ -3,7 +3,7 @@ title: Chapter 7. Sockets
 authors:
   - author: G. Adam Stanislav
 prev: books/developers-handbook/partii
-next: books/developers-handbook/ipv6
+next: books/developers-handbook/kqueue
 description: FreeBSD Sockets
 tags: ["Sockets", "Protocols"]
 showBookMenu: true

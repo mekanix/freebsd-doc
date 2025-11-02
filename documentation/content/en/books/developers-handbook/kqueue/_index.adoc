@@ -1,0 +1,208 @@
+---
+title: Chapter 8. KQueue / Kevent
+authors:
+  - author: Goran Mekić
+prev: books/developers-handbook/sockets
+next: books/developers-handbook/ipv6
+description: KQueue support in kernel space
+tags: ["kqueue", "kevent", "polling", "FreeBSD"]
+showBookMenu: true
+weight: 9
+params:
+  path: "/books/developers-handbook/kqueue/"
+---
+
+[[kqueue]]
+= KQueue / Kevent
+:doctype: book
+:toc: macro
+:toclevels: 1
+:icons: font
+:sectnums:
+:sectnumlevels: 6
+:sectnumoffset: 8
+:partnums:
+:source-highlighter: rouge
+:experimental:
+:images-path: books/developers-handbook/
+
+ifdef::env-beastie[]
+ifdef::backend-html5[]
+:imagesdir: ../../../../images/{images-path}
+endif::[]
+ifndef::book[]
+include::shared/authors.adoc[]
+include::shared/mirrors.adoc[]
+include::shared/releases.adoc[]
+include::shared/attributes/attributes-{{% lang %}}.adoc[]
+include::shared/{{% lang %}}/teams.adoc[]
+include::shared/{{% lang %}}/mailing-lists.adoc[]
+include::shared/{{% lang %}}/urls.adoc[]
+toc::[]
+endif::[]
+ifdef::backend-pdf,backend-epub3[]
+include::../../../../../shared/asciidoctor.adoc[]
+endif::[]
+endif::[]
+
+ifndef::env-beastie[]
+toc::[]
+include::../../../../../shared/asciidoctor.adoc[]
+endif::[]
+
+[[kqueue-synopsis]]
+== KQueue Synopsis
+
+This section should explain how to add kqueue/kevent support to existing
+driver.
+
+[[kqueue-device-example]]
+== Device Driver Example
+
+It is often the case that device has two channels: one for reading and
+one for writing. That's exacly what this example will assume with the
+module called dummy.
+
+Two structures are of importance for kernel side kqueue support: `struct
+mtx` and `struct selinfo`. It is very probable the module already has these
+structures and that they are per channel. Somewhere in open handler,
+list of knotes should be initialized.
+
+[.programlisting]
+....
+static int
+dummy_open(...)
+{
+       . . .
+       // Initialize knlist for one channel
+       knlist_init_mtx(&selinfo.si_note, mtx);
+       . . .
+}
+
+static int
+dummy_close(...)
+{
+       . . .
+       // Destroy knlist for one channel
+       knlist_clear(&selinfo.si_note, 0);
+       knlist_destroy(&selinfo.si_note);
+       . . .
+}
+....
+
+The `0` in `knlist_clear` denotes that mtx is not locked and that invocation
+of this function should lock it.
+
+Next we need to register kqueue filters as knotes. To do that, we define
+`dummy_kqfilter()` function.
+
+[.programlisting]
+....
+static int
+dummy_kqfilter(struct cdev *dev, struct knote *kn)
+{
+       int error = 0;
+       // Get the pointer we want to save in kn_hook
+       // and name it "mydev"
+       kn->kn_hook = mydev;
+       switch (kn->kn_filter) {
+       case EVFILT_READ:
+               kn->kn_fop = &dummy_kqfilter_read_ops;
+               knlist_add(&selinfo.si_note, kn, 1);
+               break;
+       case EVFILT_WRITE:
+               kn->kn_fop = &dummy_kqfilter_write_ops;
+               knlist_add(&selinfo.si_note, kn, 1);
+               break;
+       default:
+               error = EINVAL;
+               break;
+       }
+       return (error);
+}
+....
+
+Note that `mydev` is usually fetched from the module and it is the pointer
+we will later use for easier handling of events in filter functions. The
+`selinfo` is also fetched from the module. `kn_list_add()` has 1 as last
+argument denoting that the invocation of that function will not lock. To
+get `mydev` and `selinfo` you will probably have to lock, so this function
+shouldn't. Next, we need read and write filterops. For simplicity, only
+read filterops are shown.
+
+[.programlisting]
+....
+static const struct filterops dummy_kqfilter_read_ops = {
+       .f_isfd = 1,
+       .f_detach = dummy_kqdetach,
+       .f_event = dummy_kqfilter_read_event,
+};
+....
+
+Both, read and write filterops will share the detach function, but event
+function will be different. Let us examine `dummy_kqfilter_read_event()`
+next.
+
+[.programlisting]
+....
+static int
+dummy_kqfilter_read_event(struct knote *kn, long hint) {
+       mydev = kn->kn_hook;
+       if (/* there's something wrong */) {
+               kn->kn_data = EBADF;
+               kn->kn_flags |= EV_ERROR;
+               return (1);
+       }
+       if (/* knote should be ignored /*)
+               return (0);
+       // Replace 1024 with size of data ready to be read from this channel.
+       // If kn_data will not change over time, you can set the size in
+       // dummy_kqfilter
+       kn->kn_data = 1024;
+       return (1);
+}
+....
+
+As kqueue(9) doesn't change kn_hook, you can get the mydev from kn. You
+should take care of any locking that's needed. Next, let's see how
+`dummy_kqdetach()` should be implemented.
+
+[.programlisting]
+....
+static void
+dummy_kqdetach(struct knote *kn) {
+       . . .
+       knlist_remove(&selinfo.si_note, kn, 0);
+       . . .
+}
+....
+
+The 0 denotes that the invocation of this function should lock fist. If
+the rest of the code already locks, change 0 to 1. What is needed now is
+to notify when there is some IO. To do that, find the selwakeup(9) or
+selwakeuppri and place the call to `KNOTE_LOCKED` around that function
+call. Where exactly should it be called depends on the implementation of
+the `dummy_chn_wakeup()` function in an actual module.
+
+[.programlisting]
+....
+static void
+dummy_chn_wakeup(/* arguments */) {
+       . . .
+       selwakeup(selinfo);
+       KNOTE_LOCKED(&selinfo.si_note, 0);
+       . . .
+}
+....
+
+The last bit is to register dummy_kqfilter() as a module handler.
+
+[.programlisting]
+....
+static d_kqfilter_t dummy_kqfilter;
+struct cdevsw dummy_cdevsw = {
+       . . .
+       .d_kqfilter =   dummy_kqfilter,
+       . . .
+}
+....
